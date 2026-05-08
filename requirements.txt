@@ -1,0 +1,9 @@
+httpx
+beautifulsoup4
+lxml
+fastapi
+uvicorn
+pydantic
+sentence-transformers
+faiss-cpu
+anthropic
