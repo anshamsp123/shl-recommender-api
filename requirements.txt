@@ -4,6 +4,4 @@ lxml
 fastapi
 uvicorn
 pydantic
-faiss-cpu
 anthropic
-fastembed
