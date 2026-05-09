@@ -1,7 +1,7 @@
 import json
 import numpy as np
 import faiss
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from typing import List, Dict, Optional
 
 class CatalogIndex:
@@ -12,12 +12,11 @@ class CatalogIndex:
             cls._instance = super(CatalogIndex, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, catalog_path: str, embed_model: str = "all-MiniLM-L6-v2"):
+    def __init__(self, catalog_path: str, embed_model: str = "BAAI/bge-small-en-v1.5"):
         if hasattr(self, 'initialized') and self.initialized:
             return
             
         self.catalog_path = catalog_path
-        self.embed_model_name = embed_model
         
         try:
             with open(catalog_path, 'r', encoding='utf-8') as f:
@@ -28,21 +27,19 @@ class CatalogIndex:
         if not self.data:
             raise RuntimeError(f"Catalog at {catalog_path} is empty.")
             
-        # Create a dictionary for O(1) lookups by name
         self.name_to_doc = {item["name"]: item for item in self.data}
-        
-        # Prepare text for embedding
         self.texts = [f"{item['name']}. {item.get('description', '')}" for item in self.data]
         
-        # Initialize model and embed
         try:
-            self.model = SentenceTransformer(embed_model)
-            embeddings = self.model.encode(self.texts, convert_to_numpy=True)
+            # fastembed is incredibly lightweight and doesn't need PyTorch
+            self.model = TextEmbedding(model_name=embed_model)
             
-            # Normalize embeddings for cosine similarity
+            # fastembed returns a generator, so we convert it to a list then to a numpy array
+            embeddings_list = list(self.model.embed(self.texts))
+            embeddings = np.vstack(embeddings_list).astype(np.float32)
+            
             faiss.normalize_L2(embeddings)
             
-            # Build index
             dimension = embeddings.shape[1]
             self.index = faiss.IndexFlatIP(dimension)
             self.index.add(embeddings)
@@ -60,7 +57,6 @@ class CatalogIndex:
             text = f"{item['name']} {item.get('description', '')}".lower()
             score = sum(1 for w in query_words if w in text)
             scored_items.append((score, item))
-            
         scored_items.sort(key=lambda x: x[0], reverse=True)
         return [item for score, item in scored_items[:top_k]]
 
@@ -68,9 +64,10 @@ class CatalogIndex:
         if getattr(self, 'use_fallback', False):
             return self._fallback_search(query, top_k)
             
-        query_emb = self.model.encode([query], convert_to_numpy=True)
-        faiss.normalize_L2(query_emb)
+        query_emb_list = list(self.model.embed([query]))
+        query_emb = np.vstack(query_emb_list).astype(np.float32)
         
+        faiss.normalize_L2(query_emb)
         D, I = self.index.search(query_emb, top_k)
         
         results = []
@@ -83,12 +80,7 @@ class CatalogIndex:
         return self.name_to_doc.get(name)
 
     def get_by_names(self, names: List[str]) -> List[Dict]:
-        results = []
-        for name in names:
-            if name in self.name_to_doc:
-                results.append(self.name_to_doc[name])
-        return results
+        return [self.name_to_doc[n] for n in names if n in self.name_to_doc]
 
-# Singleton instance getter
 def get_catalog() -> CatalogIndex:
-    return CatalogIndex(catalog_path="data/catalog.json", embed_model="all-MiniLM-L6-v2")
+    return CatalogIndex(catalog_path="data/catalog.json")
